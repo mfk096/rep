@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Web Messenger MVP</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; max-width: 720px; }
+    #chat { border: 1px solid #ccc; border-radius: 8px; height: 360px; overflow-y: auto; padding: 10px; }
+    .row { margin: 6px 0; }
+    .meta { color: #777; font-size: 12px; }
+    .system { color: #555; font-style: italic; }
+    #sendForm { margin-top: 10px; display: flex; gap: 8px; }
+    input { padding: 8px; }
+    button { padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <h1>Web Messenger MVP</h1>
+  <div class="meta" id="status">Отключено</div>
+  <div id="chat"></div>
+
+  <form id="sendForm">
+    <input id="messageInput" type="text" placeholder="Введите сообщение" autocomplete="off" required style="flex: 1;" />
+    <button type="submit">Отправить</button>
+  </form>
+
+  <script>
+    const backendHttp = prompt("URL backend HTTP", "http://localhost:8000");
+    const nickname = (prompt("Ваш ник") || "").trim();
+
+    if (!nickname) {
+      alert("Ник обязателен");
+      throw new Error("Nickname required");
+    }
+
+    const chat = document.getElementById("chat");
+    const statusEl = document.getElementById("status");
+    const sendForm = document.getElementById("sendForm");
+    const messageInput = document.getElementById("messageInput");
+
+    function appendRow(html, className = "") {
+      const row = document.createElement("div");
+      row.className = `row ${className}`;
+      row.innerHTML = html;
+      chat.appendChild(row);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function escapeHtml(value) {
+      return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    async function loadHistory() {
+      const res = await fetch(`${backendHttp}/api/messages?limit=100`);
+      if (!res.ok) return;
+      const data = await res.json();
+      for (const msg of data.messages) {
+        appendRow(`<b>${escapeHtml(msg.nickname)}:</b> ${escapeHtml(msg.text)} <span class="meta">${new Date(msg.created_at).toLocaleString()}</span>`);
+      }
+    }
+
+    const wsUrl = backendHttp.replace("http", "ws") + `/ws?nickname=${encodeURIComponent(nickname)}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      statusEl.textContent = `Подключено как ${nickname}`;
+    };
+
+    ws.onclose = (e) => {
+      statusEl.textContent = `Отключено (${e.reason || e.code})`;
+    };
+
+    ws.onmessage = (event) => {
+      const payload = JSON.parse(event.data);
+      if (payload.type === "system") {
+        appendRow(escapeHtml(payload.text), "system");
+        return;
+      }
+      if (payload.type === "message") {
+        const msg = payload.message;
+        appendRow(`<b>${escapeHtml(msg.nickname)}:</b> ${escapeHtml(msg.text)} <span class="meta">${new Date(msg.created_at).toLocaleString()}</span>`);
+      }
+    };
+
+    sendForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const text = messageInput.value.trim();
+      if (!text || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(text);
+      messageInput.value = "";
+      messageInput.focus();
+    });
+
+    loadHistory().catch(() => {
+      appendRow("Не удалось загрузить историю", "system");
+    });
+  </script>
+</body>
+</html>
